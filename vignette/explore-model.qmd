@@ -1,0 +1,406 @@
+---
+title: "Model exploration of AT–CTI Disequilibrium"
+author: ""
+format:
+  html:
+    code-overflow: wrap
+    code-fold: true
+    code-line-numbers: true
+    code-tools:
+      source: false
+    toc: true
+    toc-depth: 3
+    theme:
+      light: flatly
+    number-sections: true
+embed-resources: true
+execute:
+  echo: true
+  warning: false
+  message: false
+editor: source
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(purrr)
+library(patchwork)
+library(broom)
+library(knitr)
+
+theme_set(theme_classic(base_size = 12))
+```
+
+# Model formulation
+
+## Motivation: the analogue of the Lotka--Volterra model
+
+The classical Lotka--Volterra predator--prey model describes reciprocal interactions: prey abundance affects predator growth, while predators affect prey loss. Here, the ecological question is similar but different. Annual temperature ($x$) may influence the community temperature index ($\mu$), but $\mu$ does not feed back on annual temperature.
+
+The causal direction is therefore
+
+$$
+x_t \longrightarrow \mu_{t+1},
+$$
+
+with no reciprocal term
+
+$$
+\mu_t \not\longrightarrow x_{t+1}.
+$$
+It is a one-way, discrete-time dynamic system that borrows the idea of coupling two state variables while allowing only one directional interaction.
+
+## Discrete-time model
+
+Let $x_t$ and $\mu_t$ denote annual temperature and the community temperature index at time $t$. Ignoring the error terms temporarily, define
+
+$$
+x_{t+1}=x_t+ax_t=(1+a)x_t,
+$$
+
+and
+
+$$
+\mu_{t+1}=\mu_t+b\mu_t+cx_t
+          =(1+b)\mu_t+cx_t.
+$$
+
+In matrix form,
+
+$$
+\begin{pmatrix}
+x_{t+1}\\
+\mu_{t+1}
+\end{pmatrix}
+=
+\begin{pmatrix}
+1+a & 0\\
+c & 1+b
+\end{pmatrix}
+\begin{pmatrix}
+x_t\\
+\mu_t
+\end{pmatrix}.
+$$
+
+The zero in the upper-right corner encodes the one-way assumption: CTI does not affect subsequent AT.
+
+## Interpretation of the three parameters
+
+### Parameter $a$: temporal change in AT
+
+$$
+x_{t+1}=(1+a)x_t.
+$$
+
+- $a>0$: AT increases multiplicatively through time.
+- $a=0$: AT remains constant.
+- $a<0$: AT decreases multiplicatively.
+
+For example, $a=0.02$ means that AT is multiplied by $1.02$ at each time step.
+
+### Parameter $b$: internal persistence or relaxation of CTI
+
+Ignoring AT temporarily,
+
+$$
+\mu_{t+1}=(1+b)\mu_t.
+$$
+
+Thus, $1+b$ is the autoregressive persistence of $\mu$.
+
+- $-1<b<0$: CTI retains part of its previous state but relaxes through time.
+- $b=0$: CTI is fully persistent in the absence of AT forcing.
+- $b>0$: the internally propagated CTI component grows.
+
+For example, $b=-0.20$ gives $1+b=0.80$, so 80% of the previous CTI state is retained in the internal component.
+
+### Parameter $c$: one-way AT forcing on CTI
+
+$$
+\mu_{t+1}=(1+b)\mu_t+cx_t.
+$$
+
+The parameter $c$ measures the conditional effect of current AT on subsequent CTI after accounting for current CTI.
+
+- $c>0$: higher AT predicts higher subsequent CTI.
+- $c=0$: AT has no one-step effect on CTI.
+- $c<0$: higher AT predicts lower subsequent CTI.
+
+### Recovering the disequilibrium effect algebraically
+
+Define climatic disequilibrium as
+
+$$
+D_t=x_t-\mu_t.
+$$
+
+Then
+
+$$
+x_t=\mu_t+D_t.
+$$
+
+Substituting this identity into the CTI equation gives
+
+$$
+\begin{aligned}
+\mu_{t+1}
+&=(1+b)\mu_t+cx_t\\
+&=(1+b)\mu_t+c(\mu_t+D_t)\\
+&=(1+b+c)\mu_t+cD_t.
+\end{aligned}
+$$
+
+Therefore, we can do an algebraic reparameterization:
+
+$$
+\boxed{\mu_{t+1}=(1+b+c)\mu_t+cD_t.}
+$$
+
+### Assumption of an invariant $x=\mu$
+
+The condition $c=a-b$ is derived by requiring the equality $x=\mu$ to remain unchanged over time.
+
+Suppose that, at time $t$,
+
+$$
+x_t=\mu_t.
+$$
+
+According to the model,
+
+$$
+x_{t+1}=(1+a)x_t=(1+a)x,
+$$
+
+whereas
+
+$$
+\mu_{t+1}
+=(1+b)\mu_t+cx_t
+=(1+b+c)x.
+$$
+
+For the two variables to remain equal at the next time step, we require
+
+$$
+x_{t+1}=\mu_{t+1}.
+$$
+
+Therefore,
+
+$$
+(1+a)x=(1+b+c)x.
+$$
+
+For ($x\neq0$), this gives
+
+$$
+1+a=1+b+c,
+$$
+
+and hence
+
+$$
+\boxed{c=a-b.}
+$$
+
+Thus, $c=a-b$ is the condition under which $x_t=\mu_t$ implies $x_{t+1}=\mu_{t+1}$. In other words, the line $\mu=x$, or equivalently $D=x-\mu=0$, is an invariant line of the dynamic system..
+
+# Simulation cases
+
+We simulate four cases to illustrate the dynamics of the one-way AT--CTI model. The four cases are:
+
+1. Constant AT; CTI starts below AT;
+2. Constant AT; CTI starts above AT;
+3. Increasing AT; CTI starts below AT;
+4. Increasing AT; CTI starts above AT
+
+```{r}
+#| label: simulate-function
+
+source(here::here("scripts/simulation.R"))
+```
+
+For all four cases, `c` is omitted. The function therefore sets
+
+$$
+c=a-b.
+$$
+
+With $b=-0.20$, the disequilibrium dynamics become
+
+$$
+D_{t+1}=0.8D_t,
+$$
+
+so 80% of the previous disequilibrium is retained and 20% is removed at each time step.
+
+```{r}
+#| label: four-simulations
+
+sim_cases <- list(
+  simulate_at_cti(
+    n_step = 30,
+    AT0 = 20,
+    CTI0 = 10,
+    a = 0,
+    b = -0.20,
+    case = "1. Constant AT; CTI starts below AT"
+  ),
+  simulate_at_cti(
+    n_step = 30,
+    AT0 = 20,
+    CTI0 = 30,
+    a = 0,
+    b = -0.20,
+    case = "2. Constant AT; CTI starts above AT"
+  ),
+  simulate_at_cti(
+    n_step = 30,
+    AT0 = 20,
+    CTI0 = 10,
+    a = 0.02,
+    b = -0.20,
+    case = "3. Increasing AT; CTI starts below AT"
+  ),
+  simulate_at_cti(
+    n_step = 30,
+    AT0 = 20,
+    CTI0 = 30,
+    a = 0.02,
+    b = -0.20,
+    case = "4. Increasing AT; CTI starts above AT"
+  )
+)
+
+sim_all <- bind_rows(sim_cases)
+```
+
+## AT--CTI state space
+
+```{r}
+#| label: figure-state-space
+#| fig-width: 10
+#| fig-height: 8
+
+plots_all <- plot_at_cti_dynamics(sim_all, facet = TRUE)
+plots_all$space
+```
+
+Interpretation:
+
+- The dashed 1:1 line represents $D=0$.
+- Cases 1 and 3 begin below the line because $x_0>\mu_0$, so $D_0>0$.
+- Cases 2 and 4 begin above the line because $x_0<\mu_0$, so $D_0<0$.
+- Under $c=a-b$ and $-1<b<0$, all trajectories approach the 1:1 line without overshooting.
+- When $a=0.02$, the target itself moves because AT increases through time.
+
+## Time--value trajectories
+
+```{r}
+#| label: figure-time-value
+#| fig-width: 10
+#| fig-height: 8
+
+plots_all$time_value
+```
+
+## Disequilibrium through time
+
+```{r}
+#| label: figure-disequilibrium
+#| fig-width: 10
+#| fig-height: 7
+
+sim_all |>
+  ggplot(aes(x = time, y = D)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_line(linewidth = 0.9) +
+  geom_point(size = 1.7) +
+  facet_wrap(~case, scales = "free_y") +
+  labs(
+    x = "Time",
+    y = expression(D[t] == x[t] - mu[t]),
+    title = "Disequilibrium dynamics"
+  )
+```
+
+# Estimating the parameters from observations
+
+## Model fitting
+
+For empirical data, we can fit the one-way AT--CTI model using linear regression. The two equations are:
+
+$$
+x_{i,t+1}=\alpha_{x}+\phi_{x}x_{i,t}+\varepsilon^{x}_{i,t},
+$$
+
+$$
+\mu_{i,t+1}=\alpha_{\mu}+\phi_{\mu}\mu_{i,t}+cx_{i,t}
++\varepsilon^{\mu}_{i,t}.
+$$
+
+The dynamic coefficients are still summarized as
+
+$$
+a=\phi_{x}-1,
+\qquad
+b=\phi_{\mu}-1.
+$$
+
+## What should be tested?
+
+Three related but distinct questions can be evaluated.
+
+### Directional AT or disequilibrium effect
+
+$$
+H_1:c>0.
+$$
+
+A positive $c$ means that, after accounting for current CTI, a more positive $D_t=x_t-\mu_t$ predicts a higher subsequent CTI.
+
+### Is $\mu=x$ the invariant target line?
+
+Define
+
+$$
+q=c-(a-b).
+$$
+
+Test
+
+$$
+H_0:q=0.
+$$
+
+Failure to reject $q=0$ is consistent with $D=0$ being invariant. It does not by itself prove convergence.
+
+Because $a$ is estimated from the AT equation while $b$ and $c$ are estimated from the CTI equation, uncertainty should account for both equations. We could consider using a site-level bootstrap,  method to construct the confidence interval for $q$.
+
+### Does disequilibrium converge?
+
+When $q=0$,
+
+$$
+D_{t+1}=(1+b)D_t.
+$$
+
+Convergence requires
+
+$$
+|1+b|<1.
+$$
+
+Monotonic convergence without overshooting requires
+
+$$
+-1<b<0.
+$$
