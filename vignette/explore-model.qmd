@@ -32,8 +32,13 @@ library(purrr)
 library(patchwork)
 library(broom)
 library(knitr)
+library(nimble)
 
 theme_set(theme_classic(base_size = 12))
+
+source(here::here("scripts/plot-cases.R"))
+source(here::here("scripts/data-simulation.R"))
+source(here::here("scripts/model-bayes.R"))
 ```
 
 # Model formulation
@@ -53,6 +58,7 @@ with no reciprocal term
 $$
 \mu_t \not\longrightarrow x_{t+1}.
 $$
+
 It is a one-way, discrete-time dynamic system that borrows the idea of coupling two state variables while allowing only one directional interaction.
 
 ## Discrete-time model
@@ -222,12 +228,6 @@ We simulate four cases to illustrate the dynamics of the one-way AT--CTI model. 
 3. Increasing AT; CTI starts below AT;
 4. Increasing AT; CTI starts above AT
 
-```{r}
-#| label: simulate-function
-
-source(here::here("scripts/simulation.R"))
-```
-
 For all four cases, `c` is omitted. The function therefore sets
 
 $$
@@ -246,7 +246,7 @@ so 80% of the previous disequilibrium is retained and 20% is removed at each tim
 #| label: four-simulations
 
 sim_cases <- list(
-  simulate_at_cti(
+  generate_plot_at_cti(
     n_step = 30,
     AT0 = 20,
     CTI0 = 10,
@@ -254,7 +254,7 @@ sim_cases <- list(
     b = -0.20,
     case = "1. Constant AT; CTI starts below AT"
   ),
-  simulate_at_cti(
+  generate_plot_at_cti(
     n_step = 30,
     AT0 = 20,
     CTI0 = 30,
@@ -262,7 +262,7 @@ sim_cases <- list(
     b = -0.20,
     case = "2. Constant AT; CTI starts above AT"
   ),
-  simulate_at_cti(
+  generate_plot_at_cti(
     n_step = 30,
     AT0 = 20,
     CTI0 = 10,
@@ -270,7 +270,7 @@ sim_cases <- list(
     b = -0.20,
     case = "3. Increasing AT; CTI starts below AT"
   ),
-  simulate_at_cti(
+  generate_plot_at_cti(
     n_step = 30,
     AT0 = 20,
     CTI0 = 30,
@@ -301,6 +301,23 @@ Interpretation:
 - Cases 2 and 4 begin above the line because $x_0<\mu_0$, so $D_0<0$.
 - Under $c=a-b$ and $-1<b<0$, all trajectories approach the 1:1 line without overshooting.
 - When $a=0.02$, the target itself moves because AT increases through time.
+
+## First-difference AT--CTI state space
+
+```{r}
+#| label: figure-delta-space
+#| fig-width: 10
+#| fig-height: 8
+
+plots_all$delta_space
+```
+
+Here, each point is $(\Delta x_t, \Delta\mu_t)$, where
+
+$$
+\Delta x_t=x_t-x_{t-1},\qquad
+\Delta\mu_t=\mu_t-\mu_{t-1}.
+$$
 
 ## Time--value trajectories
 
@@ -404,3 +421,140 @@ Monotonic convergence without overshooting requires
 $$
 -1<b<0.
 $$
+
+
+# Simulations
+
+## Generating simulation data
+
+We first generate simulation data for multiple plots with shared dynamics,
+different initial states, and plot-level random intercepts.
+
+```{r generate-simulation}
+sim_stochastic_plots <- simulate_at_cti_stochastic_plots(
+  n_plot = 20,
+  n_step = 15,
+  AT0_min = 15,
+  AT0_max = 20,
+  CTI0_min = 10,
+  CTI0_max = 25,
+  a = 0.02,
+  b = -0.20,
+  sd_AT = 1,
+  sd_CTI = 1,
+  sigma_plot_AT = 0.5,
+  sigma_plot_CTI = 0.5,
+  case = "Stochastic plots: shared dynamics; different initial states",
+  seed = 123
+)
+```
+
+The same plotting function can be applied to the stochastic multi-plot data.
+Each plot is shown as a trajectory.
+
+```{r stochastic-plots}
+#| fig-width: 7
+#| fig-height: 7
+stochastic_plots <- plot_at_cti_dynamics(
+  sim_stochastic_plots |>
+    mutate(case = paste("Plot", plot)),
+  facet = F
+)
+
+stochastic_plots$space
+```
+
+
+## Using two independent models to estimate parameters
+
+We can fit the AT and CTI equations independently using linear mixed-effects
+models, with plot as a random intercept. The fixed effects are shared across
+plots, while each plot has its own intercept.
+
+The simulation includes plot-specific dynamic intercepts, so the random
+intercept terms in the fitted models correspond to effects generated in the
+data.
+
+```{r freq-model}
+sim_for_fit <- sim_stochastic_plots |>
+  group_by(plot) |>
+  arrange(time, .by_group = TRUE) |>
+  mutate(
+    AT_next = lead(AT),
+    CTI_next = lead(CTI)
+  ) |>
+  ungroup() |>
+  filter(!is.na(AT_next), !is.na(CTI_next))
+
+# Fit the AT equation:
+# AT_(t+1) = 1 + a + a_plot + error
+fit_AT <- lme4::lmer(
+  AT_next ~ AT + (1 | plot),
+  data = sim_for_fit,
+  REML = FALSE
+)
+
+# Fit the CTI equation:
+# CTI_(t+1) = 1 + b + c + b_plot + error
+fit_CTI <- lme4::lmer(
+  CTI_next ~ CTI + AT + (1 | plot),
+  data = sim_for_fit,
+  REML = FALSE
+)
+
+z_critical <- qnorm(0.975)
+
+AT_fixed <- lme4::fixef(fit_AT)["AT"]
+AT_vcov <- as.matrix(vcov(fit_AT))
+AT_se <- sqrt(AT_vcov["AT", "AT"])
+
+CTI_fixed <- lme4::fixef(fit_CTI)[c("CTI", "AT")]
+CTI_vcov <- as.matrix(vcov(fit_CTI))
+CTI_se <- sqrt(diag(CTI_vcov)[c("CTI", "AT")])
+
+parameter_estimates <- tibble(
+  parameter = c("a", "b", "c"),
+  estimate = c(
+    AT_fixed - 1,
+    CTI_fixed["CTI"] - 1,
+    CTI_fixed["AT"]
+  ),
+  std_error = c(
+    AT_se,
+    CTI_se["CTI"],
+    CTI_se["AT"]
+  )
+) |>
+  mutate(
+    conf_low = estimate - z_critical * std_error,
+    conf_high = estimate + z_critical * std_error
+  )
+parameter_estimates
+```
+
+## Using bayesian methods
+
+We can estimate the shared dynamic parameters jointly with the plot-level
+random effects. The model uses the same two transition equations as above. The parameters
+`a`, `b`, and `c` are shared across plots, while the two equations have
+separate plot-level random intercepts and residual standard deviations.
+
+```{r}
+#| message: false
+#| warning: false
+#| label: posterior-distributions
+#| fig-width: 10
+#| fig-height: 5
+
+bayes_fit <- fit_at_cti_bayes(
+  sim = sim_stochastic_plots,
+  niter = 15000,
+  nburnin = 5000,
+  thin = 4,
+  nchains = 10
+)
+
+bayes_fit$posterior_summary
+bayes_fit$posterior_plot
+```
+
